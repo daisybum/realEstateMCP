@@ -1,0 +1,56 @@
+{
+  "train": {
+    "count": 247,
+    "mean": 128,
+    "median": 128,
+    "std": 0.0,
+    "min": 128,
+    "max": 128,
+    "unk_tokens": 0,
+    "total_tokens": 31616,
+    "pct_unk": 0.0,
+    "unique_tokens": 4019,
+    "model_vocab_size": 102400,
+    "coverage_pct": 3.9248046875,
+    "duplicates": {
+      "duplicate_rows": 0,
+      "duplicate_variants": 0
+    }
+  },
+  "test": {
+    "count": 31,
+    "mean": 128,
+    "median": 128,
+    "std": 0.0,
+    "min": 128,
+    "max": 128,
+    "unk_tokens": 0,
+    "total_tokens": 3968,
+    "pct_unk": 0.0,
+    "unique_tokens": 1179,
+    "model_vocab_size": 102400,
+    "coverage_pct": 1.1513671875,
+    "duplicates": {
+      "duplicate_rows": 0,
+      "duplicate_variants": 0
+    }
+  },
+  "validation": {
+    "count": 31,
+    "mean": 128,
+    "median": 128,
+    "std": 0.0,
+    "min": 128,
+    "max": 128,
+    "unk_tokens": 0,
+    "total_tokens": 3968,
+    "pct_unk": 0.0,
+    "unique_tokens": 1201,
+    "model_vocab_size": 102400,
+    "coverage_pct": 1.1728515625,
+    "duplicates": {
+      "duplicate_rows": 0,
+      "duplicate_variants": 0
+    }
+  }
+}

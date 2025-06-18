@@ -1,0 +1,18 @@
+stages:
+  build_dataset:
+    cmd: python scripts/build_dataset.py
+    deps:
+      - dataset/weolbu_posts.jsonl
+      - scripts/build_dataset.py
+      - src/data
+    outs:
+      - data/hf_dataset
+  validate:
+    cmd: python scripts/validate_dataset.py
+    deps:
+      - data/hf_dataset
+      - scripts/validate_dataset.py
+      - src/data/quality.py
+    metrics:
+      - report.json:
+          cache: false

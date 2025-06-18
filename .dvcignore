@@ -1,0 +1,4 @@
+# Ignore raw data, output caches managed by DVC automatically
+**/__pycache__/
+*.tmp
+*.log

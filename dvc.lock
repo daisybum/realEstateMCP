@@ -1,0 +1,45 @@
+schema: '2.0'
+stages:
+  build_dataset:
+    cmd: python scripts/build_dataset.py
+    deps:
+    - path: dataset/weolbu_posts.jsonl
+      hash: md5
+      md5: 12864ed145e617624ff0cd872a23d003
+      size: 4702156
+    - path: scripts/build_dataset.py
+      hash: md5
+      md5: 53839b3f2e1e86fccaca14d53f39d0c8
+      size: 701
+    - path: src/data
+      hash: md5
+      md5: 75922fa2b05c190866d1e6335cae1f17.dir
+      size: 23697
+      nfiles: 7
+    outs:
+    - path: data/hf_dataset
+      hash: md5
+      md5: 31007bcb9c60f59d11a8a4701ad45211.dir
+      size: 205981
+      nfiles: 10
+  validate:
+    cmd: python scripts/validate_dataset.py
+    deps:
+    - path: data/hf_dataset
+      hash: md5
+      md5: 31007bcb9c60f59d11a8a4701ad45211.dir
+      size: 205981
+      nfiles: 10
+    - path: scripts/validate_dataset.py
+      hash: md5
+      md5: b04eeba7df5a0d0db661f0fe9bd685fe
+      size: 637
+    - path: src/data/quality.py
+      hash: md5
+      md5: 5ee01cb8417ffd3ff423312c97257c83
+      size: 5172
+    outs:
+    - path: report.json
+      hash: md5
+      md5: 51235dffc9d2d383d5faad1cf6d1a209
+      size: 1094
