@@ -1,0 +1,243 @@
+# Task ID: 8
+# Title: Implement Feedback Collection and Analytics
+# Status: pending
+# Dependencies: 4, 7
+# Priority: medium
+# Description: Build the backend infrastructure to collect user feedback on model responses and track usage metrics for continuous improvement.
+# Details:
+1. Create a database schema for storing feedback data
+2. Implement API endpoints for submitting feedback
+3. Develop analytics dashboards to visualize usage patterns
+4. Set up periodic reports on model performance
+5. Implement data export functionality for offline analysis
+
+Database schema example (PostgreSQL):
+```sql
+-- Queries table
+CREATE TABLE queries (
+    id SERIAL PRIMARY KEY,
+    query_text TEXT NOT NULL,
+    response_text TEXT NOT NULL,
+    request_id VARCHAR(36) NOT NULL,
+    timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+    user_id VARCHAR(255),
+    session_id VARCHAR(255),
+    response_time_ms INTEGER,
+    sources_used JSONB
+);
+
+-- Feedback table
+CREATE TABLE feedback (
+    id SERIAL PRIMARY KEY,
+    query_id INTEGER REFERENCES queries(id),
+    rating INTEGER CHECK (rating >= 1 AND rating <= 5),
+    is_helpful BOOLEAN,
+    comment TEXT,
+    timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+    user_id VARCHAR(255)
+);
+
+-- Analytics table for aggregated metrics
+CREATE TABLE daily_metrics (
+    id SERIAL PRIMARY KEY,
+    date DATE NOT NULL,
+    total_queries INTEGER NOT NULL,
+    avg_response_time_ms FLOAT,
+    positive_feedback_count INTEGER,
+    negative_feedback_count INTEGER,
+    unique_users INTEGER
+);
+```
+
+Feedback API endpoint:
+```python
+from fastapi import FastAPI, Depends, HTTPException
+from pydantic import BaseModel
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import os
+
+app = FastAPI()
+
+# Database connection
+def get_db_connection():
+    conn = psycopg2.connect(
+        host=os.environ.get("DB_HOST"),
+        database=os.environ.get("DB_NAME"),
+        user=os.environ.get("DB_USER"),
+        password=os.environ.get("DB_PASSWORD")
+    )
+    conn.cursor_factory = RealDictCursor
+    return conn
+
+class FeedbackRequest(BaseModel):
+    request_id: str
+    is_helpful: bool
+    rating: int = None
+    comment: str = None
+    user_id: str = None
+
+@app.post("/feedback")
+async def submit_feedback(feedback: FeedbackRequest):
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # First get the query_id from the request_id
+        cursor.execute(
+            "SELECT id FROM queries WHERE request_id = %s",
+            (feedback.request_id,)
+        )
+        result = cursor.fetchone()
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Query not found")
+            
+        query_id = result["id"]
+        
+        # Insert feedback
+        cursor.execute(
+            """INSERT INTO feedback 
+               (query_id, is_helpful, rating, comment, user_id) 
+               VALUES (%s, %s, %s, %s, %s)
+            """,
+            (query_id, feedback.is_helpful, feedback.rating, 
+             feedback.comment, feedback.user_id)
+        )
+        
+        conn.commit()
+        return {"status": "success"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+```
+
+Analytics dashboard (using Plotly Dash):
+```python
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output
+import plotly.express as px
+import pandas as pd
+import psycopg2
+import os
+
+# Database connection function
+def get_data():
+    conn = psycopg2.connect(
+        host=os.environ.get("DB_HOST"),
+        database=os.environ.get("DB_NAME"),
+        user=os.environ.get("DB_USER"),
+        password=os.environ.get("DB_PASSWORD")
+    )
+    
+    # Query for daily metrics
+    daily_df = pd.read_sql("""
+        SELECT date, total_queries, avg_response_time_ms, 
+               positive_feedback_count, negative_feedback_count
+        FROM daily_metrics
+        ORDER BY date
+    """, conn)
+    
+    # Query for top questions
+    top_questions_df = pd.read_sql("""
+        SELECT query_text, COUNT(*) as query_count
+        FROM queries
+        GROUP BY query_text
+        ORDER BY query_count DESC
+        LIMIT 10
+    """, conn)
+    
+    conn.close()
+    return daily_df, top_questions_df
+
+# Initialize Dash app
+app = dash.Dash(__name__)
+
+app.layout = html.Div([
+    html.H1("SLM Analytics Dashboard"),
+    
+    dcc.Tabs([
+        dcc.Tab(label="Usage Metrics", children=[
+            html.Div([
+                html.H3("Daily Query Volume"),
+                dcc.Graph(id="daily-volume-graph"),
+                
+                html.H3("Response Time Trend"),
+                dcc.Graph(id="response-time-graph"),
+                
+                html.H3("Feedback Trend"),
+                dcc.Graph(id="feedback-graph"),
+            ])
+        ]),
+        
+        dcc.Tab(label="Top Questions", children=[
+            html.Div([
+                html.H3("Most Frequent Queries"),
+                dcc.Graph(id="top-questions-graph"),
+            ])
+        ]),
+    ]),
+    
+    dcc.Interval(
+        id="interval-component",
+        interval=60*60*1000,  # refresh every hour
+        n_intervals=0
+    )
+])
+
+@app.callback(
+    [Output("daily-volume-graph", "figure"),
+     Output("response-time-graph", "figure"),
+     Output("feedback-graph", "figure"),
+     Output("top-questions-graph", "figure")],
+    [Input("interval-component", "n_intervals")]
+)
+def update_graphs(n):
+    daily_df, top_questions_df = get_data()
+    
+    # Daily volume chart
+    volume_fig = px.line(
+        daily_df, x="date", y="total_queries",
+        title="Daily Query Volume"
+    )
+    
+    # Response time chart
+    response_time_fig = px.line(
+        daily_df, x="date", y="avg_response_time_ms",
+        title="Average Response Time (ms)"
+    )
+    
+    # Feedback chart
+    feedback_df = daily_df.copy()
+    feedback_df["positive_ratio"] = feedback_df["positive_feedback_count"] / \
+                                  (feedback_df["positive_feedback_count"] + 
+                                   feedback_df["negative_feedback_count"])
+    feedback_fig = px.line(
+        feedback_df, x="date", y="positive_ratio",
+        title="Positive Feedback Ratio"
+    )
+    
+    # Top questions chart
+    top_questions_fig = px.bar(
+        top_questions_df, x="query_count", y="query_text",
+        orientation="h", title="Top 10 Questions"
+    )
+    
+    return volume_fig, response_time_fig, feedback_fig, top_questions_fig
+
+if __name__ == "__main__":
+    app.run_server(debug=True)
+```
+
+# Test Strategy:
+1. Test feedback submission with various input combinations
+2. Verify that feedback is correctly stored in the database
+3. Test analytics dashboard with sample data
+4. Validate that metrics are correctly calculated
+5. Test data export functionality
+6. Verify that the dashboard refreshes correctly
+7. Test with high volumes of feedback data to ensure performance
+8. Validate that user IDs are properly anonymized if required

@@ -1,0 +1,69 @@
+# Task ID: 3
+# Title: Implement Model Training Pipeline
+# Status: pending
+# Dependencies: 1, 2
+# Priority: high
+# Description: Develop the training infrastructure to fine-tune the selected base model on the preprocessed corpus using Hugging Face's Trainer API.
+# Details:
+1. Set up PyTorch training environment with Hugging Face's Trainer API
+2. Configure training hyperparameters (learning rate, batch size, epochs)
+3. Implement gradient accumulation to handle memory constraints
+4. Set up checkpointing to save model states during training
+5. Integrate MLflow or similar tool for experiment tracking
+6. Create evaluation metrics (perplexity, accuracy on validation set)
+7. Implement early stopping based on validation metrics
+8. Configure model export in safe-tensors format
+
+The training script should include:
+```python
+from transformers import Trainer, TrainingArguments, AutoModelForCausalLM, AutoTokenizer
+import torch
+import mlflow
+
+# Load tokenizer and model
+tokenizer = AutoTokenizer.from_pretrained("model_name")
+model = AutoModelForCausalLM.from_pretrained("model_name", torch_dtype=torch.float16)
+
+# Configure training arguments
+training_args = TrainingArguments(
+    output_dir="./results",
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=4,  # Effective batch size of 16
+    learning_rate=2e-5,
+    num_train_epochs=3,
+    fp16=True,  # Use FP16 precision
+    logging_dir="./logs",
+    logging_steps=100,
+    eval_steps=500,
+    save_steps=1000,
+    evaluation_strategy="steps",
+    save_total_limit=3,
+    load_best_model_at_end=True,
+)
+
+# Initialize Trainer
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+)
+
+# Start training
+trainer.train()
+
+# Save final model
+trainer.save_model("./final_model")
+model.save_pretrained("./final_model", safe_serialization=True)  # Use safe-tensors format
+tokenizer.save_pretrained("./final_model")
+```
+
+# Test Strategy:
+1. Run a small-scale training job on a subset of data to validate the pipeline
+2. Monitor GPU memory usage during training to ensure it stays within limits
+3. Verify checkpoints are saved correctly and can be loaded
+4. Validate that metrics are properly logged in MLflow
+5. Test the early stopping mechanism
+6. Ensure the final model is correctly exported in safe-tensors format
+7. Compare training and validation loss curves to detect overfitting
+8. Evaluate the trained model on a held-out test set

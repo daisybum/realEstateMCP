@@ -1,0 +1,87 @@
+# Task ID: 6
+# Title: Integrate Retrieval-Augmented Generation (RAG)
+# Status: pending
+# Dependencies: 4, 5
+# Priority: medium
+# Description: Enhance the inference API to incorporate retrieved documents as context for the model, improving factual accuracy and reducing hallucinations.
+# Details:
+1. Extend the inference API to use the vector store for document retrieval
+2. Implement prompt engineering to incorporate retrieved passages into the context
+3. Develop a ranking mechanism to select the most relevant passages
+4. Add citation tracking to reference source documents
+5. Implement fallback mechanisms when no relevant documents are found
+
+Implementation example:
+```python
+from fastapi import FastAPI, Depends, HTTPException
+from pydantic import BaseModel
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+app = FastAPI()
+
+# Load model, tokenizer, and vector store
+tokenizer = AutoTokenizer.from_pretrained("./final_model")
+model = AutoModelForCausalLM.from_pretrained("./final_model", torch_dtype=torch.float16)
+model.eval()
+
+# Initialize vector store
+vector_store = VectorStore()
+vector_store.load("./vector_store")
+
+class RAGRequest(BaseModel):
+    query: str
+    max_length: int = 512
+    temperature: float = 0.7
+    num_documents: int = 3
+
+class RAGResponse(BaseModel):
+    response: str
+    sources: list
+    request_id: str
+
+@app.post("/rag_generate", response_model=RAGResponse)
+async def rag_generate(request: RAGRequest):
+    # Retrieve relevant documents
+    retrieved_docs = vector_store.search(request.query, k=request.num_documents)
+    
+    # Format prompt with retrieved context
+    context = "\n\n".join([doc["document"] for doc in retrieved_docs])
+    prompt = f"Context information:\n{context}\n\nQuestion: {request.query}\n\nAnswer:"
+    
+    # Generate response
+    inputs = tokenizer(prompt, return_tensors="pt")
+    with torch.no_grad():
+        outputs = model.generate(
+            inputs["input_ids"].to(model.device),
+            max_length=request.max_length,
+            temperature=request.temperature,
+            do_sample=True
+        )
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    
+    # Extract just the answer part (after "Answer:")
+    answer = response.split("Answer:")[-1].strip()
+    
+    # Return response with sources
+    sources = [{
+        "text": doc["document"][:100] + "...",  # Truncate for display
+        "score": doc["score"]
+    } for doc in retrieved_docs]
+    
+    return RAGResponse(
+        response=answer,
+        sources=sources,
+        request_id=str(uuid.uuid4())
+    )
+```
+
+# Test Strategy:
+1. Compare answer quality with and without RAG
+2. Test with queries that require specific factual information
+3. Verify citation accuracy by checking if answers contain information from the retrieved documents
+4. Measure the impact on response time when adding retrieval
+5. Test edge cases where no relevant documents are found
+6. Evaluate the system on a test set of domain-specific questions
+7. Check for hallucinations by comparing answers to source documents
+8. Test with varying numbers of retrieved documents to find optimal settings

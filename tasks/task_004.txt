@@ -1,0 +1,107 @@
+# Task ID: 4
+# Title: Build Inference API Service
+# Status: pending
+# Dependencies: 3
+# Priority: medium
+# Description: Develop a RESTful or gRPC API service to serve the fine-tuned model for inference, handling incoming requests and returning model responses.
+# Details:
+1. Create a containerized API service using FastAPI or similar framework
+2. Implement model loading with optimizations for inference (8-bit quantization if needed)
+3. Design API endpoints for text generation
+4. Add authentication and rate limiting
+5. Implement request/response logging
+6. Set up proper error handling and fallback responses
+7. Configure Docker for deployment
+
+Example FastAPI implementation:
+```python
+from fastapi import FastAPI, Depends, HTTPException, Security
+from fastapi.security import APIKeyHeader
+from pydantic import BaseModel
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import logging
+
+app = FastAPI()
+
+# Load model and tokenizer
+tokenizer = AutoTokenizer.from_pretrained("./final_model")
+model = AutoModelForCausalLM.from_pretrained("./final_model", torch_dtype=torch.float16)
+model.eval()
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# API key authentication
+api_key_header = APIKeyHeader(name="X-API-Key")
+
+def get_api_key(api_key: str = Security(api_key_header)):
+    if api_key != "your-api-key":  # Replace with secure key validation
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+    return api_key
+
+class QueryRequest(BaseModel):
+    text: str
+    max_length: int = 512
+    temperature: float = 0.7
+
+class QueryResponse(BaseModel):
+    response: str
+    request_id: str
+    timestamp: str
+
+@app.post("/generate", response_model=QueryResponse)
+async def generate_text(request: QueryRequest, api_key: str = Depends(get_api_key)):
+    try:
+        # Log request (metadata only)
+        request_id = str(uuid.uuid4())
+        logger.info(f"Request {request_id}: length={len(request.text)}")
+        
+        # Generate response
+        inputs = tokenizer(request.text, return_tensors="pt")
+        with torch.no_grad():
+            outputs = model.generate(
+                inputs["input_ids"].to(model.device),
+                max_length=request.max_length,
+                temperature=request.temperature,
+                do_sample=True
+            )
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Log response (metadata only)
+        logger.info(f"Response {request_id}: length={len(response)}")
+        
+        return QueryResponse(
+            response=response,
+            request_id=request_id,
+            timestamp=datetime.now().isoformat()
+        )
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}")
+        raise HTTPException(status_code=500, detail="Model inference failed")
+```
+
+Dockerfile:
+```dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+# Test Strategy:
+1. Test API endpoints with sample queries
+2. Verify authentication and rate limiting work correctly
+3. Measure response times under various load conditions
+4. Test error handling by sending malformed requests
+5. Verify logging captures necessary information
+6. Test Docker container deployment
+7. Perform load testing to determine maximum throughput
+8. Validate memory usage during inference

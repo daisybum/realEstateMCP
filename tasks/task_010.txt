@@ -1,0 +1,215 @@
+# Task ID: 10
+# Title: Implement CI/CD Pipeline
+# Status: pending
+# Dependencies: 3, 4, 9
+# Priority: medium
+# Description: Set up continuous integration and deployment pipelines for automated testing, model training, and deployment.
+# Details:
+1. Set up a version-controlled repository for all code
+2. Configure CI pipelines for unit tests and data validation
+3. Implement CD for model training and deployment
+4. Create automated testing with synthetic prompts
+5. Set up staging and production environments
+
+GitHub Actions workflow example:
+```yaml
+name: SLM CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Run tests
+      run: |
+        pytest --cov=./ --cov-report=xml
+    - name: Upload coverage report
+      uses: codecov/codecov-action@v1
+
+  data_validation:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install great-expectations pandas
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Validate data
+      run: |
+        python scripts/validate_data.py
+
+  build_and_push:
+    needs: [test, data_validation]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v1
+    - name: Login to DockerHub
+      uses: docker/login-action@v1
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Build and push API image
+      uses: docker/build-push-action@v2
+      with:
+        context: ./api
+        push: true
+        tags: myorg/slm-api:latest,myorg/slm-api:${{ github.sha }}
+
+  deploy_staging:
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Deploy to staging
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.STAGING_HOST }}
+        username: ${{ secrets.STAGING_USERNAME }}
+        key: ${{ secrets.STAGING_SSH_KEY }}
+        script: |
+          cd /opt/slm
+          docker-compose pull
+          docker-compose up -d
+    - name: Run synthetic tests
+      run: |
+        python scripts/synthetic_tests.py --endpoint https://staging-api.example.com
+
+  deploy_production:
+    needs: deploy_staging
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Deploy to production
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.PRODUCTION_HOST }}
+        username: ${{ secrets.PRODUCTION_USERNAME }}
+        key: ${{ secrets.PRODUCTION_SSH_KEY }}
+        script: |
+          cd /opt/slm
+          docker-compose pull
+          docker-compose up -d
+```
+
+Synthetic testing script:
+```python
+import argparse
+import requests
+import json
+import sys
+
+def run_synthetic_tests(endpoint):
+    # Test cases with expected outputs or patterns
+    test_cases = [
+        {
+            "query": "What is the main purpose of the SLM product?",
+            "expected_pattern": "domain-specific|knowledge|customized AI"
+        },
+        {
+            "query": "How does the retrieval system work?",
+            "expected_pattern": "vector|embedding|search|index"
+        },
+        {
+            "query": "This should be out of domain",
+            "expected_pattern": "don't know|cannot answer|insufficient information"
+        }
+    ]
+    
+    results = []
+    for i, test in enumerate(test_cases):
+        print(f"Running test {i+1}/{len(test_cases)}...")
+        try:
+            response = requests.post(
+                f"{endpoint}/generate",
+                json={"text": test["query"], "temperature": 0.1},
+                headers={"X-API-Key": "test-key"}
+            )
+            
+            if response.status_code != 200:
+                results.append({
+                    "test": i+1,
+                    "status": "FAIL",
+                    "reason": f"API returned status code {response.status_code}"
+                })
+                continue
+                
+            data = response.json()
+            model_response = data["response"]
+            
+            # Check if response matches expected pattern
+            import re
+            if re.search(test["expected_pattern"], model_response, re.IGNORECASE):
+                results.append({
+                    "test": i+1,
+                    "status": "PASS",
+                    "response": model_response[:100] + "..."
+                })
+            else:
+                results.append({
+                    "test": i+1,
+                    "status": "FAIL",
+                    "reason": "Response did not match expected pattern",
+                    "response": model_response[:100] + "...",
+                    "expected_pattern": test["expected_pattern"]
+                })
+                
+        except Exception as e:
+            results.append({
+                "test": i+1,
+                "status": "ERROR",
+                "reason": str(e)
+            })
+    
+    # Print summary
+    passed = sum(1 for r in results if r["status"] == "PASS")
+    print(f"\nTest Summary: {passed}/{len(test_cases)} tests passed")
+    
+    for result in results:
+        print(f"Test {result['test']}: {result['status']}")
+        if result["status"] != "PASS":
+            print(f"  Reason: {result.get('reason', 'Unknown')}")
+    
+    # Exit with error if any tests failed
+    if passed < len(test_cases):
+        sys.exit(1)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run synthetic tests against SLM API")
+    parser.add_argument("--endpoint", required=True, help="API endpoint URL")
+    args = parser.parse_args()
+    
+    run_synthetic_tests(args.endpoint)
+```
+
+# Test Strategy:
+1. Verify that CI pipeline correctly identifies code issues
+2. Test data validation with both valid and invalid data
+3. Verify that Docker images build correctly
+4. Test deployment to staging environment
+5. Validate synthetic testing with known good and bad responses
+6. Test rollback procedures
+7. Verify that production deployment works correctly
+8. Test the entire pipeline end-to-end with a simple code change

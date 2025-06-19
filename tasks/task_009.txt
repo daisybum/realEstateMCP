@@ -1,0 +1,223 @@
+# Task ID: 9
+# Title: Set Up Monitoring and Logging Infrastructure
+# Status: pending
+# Dependencies: 4
+# Priority: medium
+# Description: Implement comprehensive monitoring and logging for both infrastructure and model performance to ensure reliability and detect anomalies.
+# Details:
+1. Set up Prometheus and Grafana for metrics collection and visualization
+2. Configure alerts for system failures and performance anomalies
+3. Implement logging for API requests, model outputs, and system events
+4. Create dashboards for key metrics (GPU utilization, request rate, error rate, etc.)
+5. Set up model-specific monitoring (perplexity, output length distribution, etc.)
+
+Prometheus configuration example:
+```yaml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'slm_api'
+    static_configs:
+      - targets: ['api:8000']
+  
+  - job_name: 'node_exporter'
+    static_configs:
+      - targets: ['node_exporter:9100']
+      
+  - job_name: 'gpu_metrics'
+    static_configs:
+      - targets: ['gpu_exporter:9400']
+```
+
+API instrumentation with Prometheus client:
+```python
+from fastapi import FastAPI
+from prometheus_client import Counter, Histogram, start_http_server
+import time
+
+app = FastAPI()
+
+# Define metrics
+REQUEST_COUNT = Counter(
+    'api_requests_total',
+    'Total count of requests by endpoint and status',
+    ['endpoint', 'status']
+)
+
+REQUEST_LATENCY = Histogram(
+    'api_request_duration_seconds',
+    'Request duration in seconds by endpoint',
+    ['endpoint']
+)
+
+MODEL_TOKEN_COUNT = Histogram(
+    'model_output_tokens',
+    'Distribution of output token counts',
+    ['endpoint']
+)
+
+# Start Prometheus metrics server
+start_http_server(8000)
+
+# Middleware to track request metrics
+@app.middleware("http")
+async def metrics_middleware(request, call_next):
+    start_time = time.time()
+    
+    response = await call_next(request)
+    
+    duration = time.time() - start_time
+    endpoint = request.url.path
+    status = response.status_code
+    
+    REQUEST_COUNT.labels(endpoint=endpoint, status=status).inc()
+    REQUEST_LATENCY.labels(endpoint=endpoint).observe(duration)
+    
+    return response
+
+# Track token counts in generation endpoint
+@app.post("/generate")
+async def generate(request: GenerateRequest):
+    # ... existing code ...
+    
+    # Track token count
+    token_count = len(outputs[0])
+    MODEL_TOKEN_COUNT.labels(endpoint="/generate").observe(token_count)
+    
+    # ... rest of function ...
+```
+
+Grafana dashboard configuration:
+```json
+{
+  "dashboard": {
+    "id": null,
+    "title": "SLM Monitoring Dashboard",
+    "panels": [
+      {
+        "title": "Request Rate",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "sum(rate(api_requests_total[5m])) by (endpoint)",
+            "legendFormat": "{{endpoint}}"
+          }
+        ]
+      },
+      {
+        "title": "Error Rate",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "sum(rate(api_requests_total{status=~'5..'}[5m])) by (endpoint) / sum(rate(api_requests_total[5m])) by (endpoint)",
+            "legendFormat": "{{endpoint}}"
+          }
+        ]
+      },
+      {
+        "title": "Response Time",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(api_request_duration_seconds_bucket[5m])) by (endpoint, le))",
+            "legendFormat": "p95 {{endpoint}}"
+          },
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(api_request_duration_seconds_bucket[5m])) by (endpoint, le))",
+            "legendFormat": "p50 {{endpoint}}"
+          }
+        ]
+      },
+      {
+        "title": "GPU Utilization",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "nvidia_gpu_utilization",
+            "legendFormat": "GPU {{index}}"
+          }
+        ]
+      },
+      {
+        "title": "GPU Memory Usage",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes * 100",
+            "legendFormat": "GPU {{index}}"
+          }
+        ]
+      },
+      {
+        "title": "Token Count Distribution",
+        "type": "heatmap",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "sum(rate(model_output_tokens_bucket[5m])) by (le)"
+          }
+        ]
+      }
+    ],
+    "refresh": "10s"
+  }
+}
+```
+
+Alert configuration:
+```yaml
+groups:
+- name: slm_alerts
+  rules:
+  - alert: HighErrorRate
+    expr: sum(rate(api_requests_total{status=~"5.."}[5m])) / sum(rate(api_requests_total[5m])) > 0.05
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High error rate detected"
+      description: "Error rate is above 5% for the last 5 minutes"
+      
+  - alert: SlowResponseTime
+    expr: histogram_quantile(0.95, sum(rate(api_request_duration_seconds_bucket[5m])) by (le)) > 2
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Slow response times detected"
+      description: "95th percentile response time is above 2 seconds"
+      
+  - alert: HighGPUUtilization
+    expr: nvidia_gpu_utilization > 90
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High GPU utilization"
+      description: "GPU utilization is above 90% for 15 minutes"
+      
+  - alert: LowDiskSpace
+    expr: node_filesystem_avail_bytes{mountpoint="/data"} / node_filesystem_size_bytes{mountpoint="/data"} * 100 < 10
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Low disk space"
+      description: "Less than 10% disk space available on /data"
+```
+
+# Test Strategy:
+1. Verify that metrics are correctly collected and displayed in Grafana
+2. Test alert triggering by simulating error conditions
+3. Validate that logs contain all necessary information
+4. Test dashboard functionality under load
+5. Verify that model-specific metrics are correctly calculated
+6. Test alert notifications (email, Slack, etc.)
+7. Validate that metrics are retained for the required period
+8. Test the system's ability to detect anomalies in model behavior

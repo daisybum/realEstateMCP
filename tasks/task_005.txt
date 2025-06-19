@@ -1,0 +1,89 @@
+# Task ID: 5
+# Title: Implement Vector Database for Retrieval
+# Status: pending
+# Dependencies: 1
+# Priority: medium
+# Description: Build a vector embedding store of the corpus to enable retrieval-augmented generation for improved answer accuracy.
+# Details:
+1. Select an appropriate vector database (FAISS, Pinecone, etc.)
+2. Create embeddings for all documents in the corpus using a suitable embedding model
+3. Implement efficient storage and indexing of the embeddings
+4. Develop a retrieval function to fetch relevant passages based on query similarity
+5. Set up a mechanism to update the vector store when new documents are added
+
+Implementation example:
+```python
+import faiss
+import numpy as np
+from transformers import AutoTokenizer, AutoModel
+import torch
+
+class VectorStore:
+    def __init__(self, embedding_model_name="sentence-transformers/all-MiniLM-L6-v2"):
+        self.tokenizer = AutoTokenizer.from_pretrained(embedding_model_name)
+        self.model = AutoModel.from_pretrained(embedding_model_name)
+        self.model.eval()
+        self.document_store = []  # Store original documents
+        self.index = None
+        
+    def _get_embedding(self, text):
+        inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        # Use mean pooling to get document embeddings
+        embeddings = outputs.last_hidden_state.mean(dim=1).numpy()
+        return embeddings
+    
+    def add_documents(self, documents):
+        # Store original documents
+        start_idx = len(self.document_store)
+        self.document_store.extend(documents)
+        
+        # Create embeddings
+        embeddings = []
+        for doc in documents:
+            embedding = self._get_embedding(doc)
+            embeddings.append(embedding)
+        
+        embeddings = np.vstack(embeddings)
+        
+        # Create or update FAISS index
+        if self.index is None:
+            dimension = embeddings.shape[1]
+            self.index = faiss.IndexFlatL2(dimension)
+        
+        self.index.add(embeddings)
+        return start_idx, start_idx + len(documents) - 1
+    
+    def search(self, query, k=5):
+        query_embedding = self._get_embedding(query)
+        distances, indices = self.index.search(query_embedding, k)
+        results = []
+        for i, idx in enumerate(indices[0]):
+            if idx < len(self.document_store):
+                results.append({
+                    "document": self.document_store[idx],
+                    "score": float(distances[0][i])
+                })
+        return results
+    
+    def save(self, path):
+        faiss.write_index(self.index, f"{path}/vector_index")
+        with open(f"{path}/documents.json", "w") as f:
+            json.dump(self.document_store, f)
+    
+    def load(self, path):
+        self.index = faiss.read_index(f"{path}/vector_index")
+        with open(f"{path}/documents.json", "r") as f:
+            self.document_store = json.load(f)
+```
+
+# Test Strategy:
+1. Test embedding generation with sample documents
+2. Verify vector storage and retrieval accuracy
+3. Measure query latency for different corpus sizes
+4. Test the system with edge cases (very short/long documents)
+5. Validate that document updates are correctly reflected in the index
+6. Compare retrieval results against expected relevant documents
+7. Benchmark memory usage for different corpus sizes
+8. Test save/load functionality for persistence
